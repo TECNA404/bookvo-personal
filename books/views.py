@@ -4,6 +4,7 @@ import requests
 
 from django.utils import timezone
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 
 from rest_framework import (
     filters,
@@ -373,3 +374,111 @@ class TranslateView(APIView):
                 "translation": translated,
             }
         )
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="lookup",
+    )
+    def lookup_word(self, request):
+        text = request.data.get("text", "").strip()
+        target = request.data.get("target", "uk").strip().lower()
+        book_id = request.data.get("book")
+        context = request.data.get("context", "").strip()
+        save_word = request.data.get("save", False)
+
+        if not text:
+            return Response(
+                {"detail": "Поле text обязательное."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(text) > 100:
+            return Response(
+                {"detail": "Слово или фраза слишком длинные."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        allowed_targets = {"uk", "ru", "pl", "de", "fr"}
+
+        if target not in allowed_targets:
+            return Response(
+                {
+                    "detail": "Неподдерживаемый язык.",
+                    "allowed_targets": sorted(allowed_targets),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        translation_response = requests.get(
+            "https://api.mymemory.translated.net/get",
+            params={
+                "q": text,
+                "langpair": f"en|{target}",
+            },
+            timeout=15,
+        )
+
+        if not translation_response.ok:
+            return Response(
+                {"detail": "Сервис перевода недоступен."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        translation_data = translation_response.json()
+        translation = (
+            translation_data.get("responseData", {})
+            .get("translatedText", "")
+            .strip()
+        )
+
+        result = {
+            "text": text,
+            "target": target,
+            "translation": translation,
+            "saved_word": None,
+        }
+
+        if save_word:
+            book = None
+
+            if book_id:
+                book = get_object_or_404(
+                    Book,
+                    id=book_id,
+                    owner=request.user,
+                )
+
+            saved_word, created = SavedWord.objects.get_or_create(
+                user=request.user,
+                word=text.lower(),
+                defaults={
+                    "translation": translation,
+                    "context": context,
+                    "book": book,
+                },
+            )
+
+            if not created:
+                saved_word.translation = translation
+
+                if context:
+                    saved_word.context = context
+
+                if book:
+                    saved_word.book = book
+
+                saved_word.save(
+                    update_fields=[
+                        "translation",
+                        "context",
+                        "book",
+                    ]
+                )
+
+            result["saved_word"] = SavedWordSerializer(
+                saved_word,
+                context={"request": request},
+            ).data
+
+        return Response(result)
