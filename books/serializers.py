@@ -14,7 +14,10 @@ class ChapterSerializer(serializers.ModelSerializer):
             "content",
             "audio_url",
         ]
-        read_only_fields = ["id"]
+        read_only_fields = [
+            "id",
+            "book",
+        ]
 
 
 class BookSerializer(serializers.ModelSerializer):
@@ -65,6 +68,14 @@ class BookSerializer(serializers.ModelSerializer):
 
         return obj.cover_image.url
 
+    def validate_progress(self, value):
+        if not 0 <= value <= 100:
+            raise serializers.ValidationError(
+                "Прогресс должен быть от 0 до 100."
+            )
+
+        return value
+
 
 class SavedWordSerializer(serializers.ModelSerializer):
     book_title = serializers.CharField(
@@ -93,6 +104,16 @@ class SavedWordSerializer(serializers.ModelSerializer):
             "next_review_at",
             "created_at",
         ]
+
+    def validate_word(self, value):
+        value = value.strip()
+
+        if not value:
+            raise serializers.ValidationError(
+                "Слово не может быть пустым."
+            )
+
+        return value
 
     def validate_book(self, book):
         request = self.context["request"]

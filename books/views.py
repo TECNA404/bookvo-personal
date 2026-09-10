@@ -1,17 +1,30 @@
 from datetime import timedelta
 
+import requests
+
 from django.utils import timezone
-from rest_framework import filters, generics, permissions, status, viewsets
+
+from rest_framework import (
+    filters,
+    generics,
+    permissions,
+    status,
+    viewsets,
+)
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from .auth_serializers import RegisterSerializer
 from .epub_importer import import_epub
-from .models import Book, Chapter, SavedWord
-from .serializers import BookSerializer, ChapterSerializer, SavedWordSerializer
-
 from .gutendex import get_catalog_books, import_gutenberg_book
+from .models import Book, Chapter, SavedWord
+from .serializers import (
+    BookSerializer,
+    ChapterSerializer,
+    SavedWordSerializer,
+)
 
 class BookViewSet(viewsets.ModelViewSet):
     serializer_class = BookSerializer
@@ -285,3 +298,51 @@ class SavedWordViewSet(viewsets.ModelViewSet):
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
+
+class TranslateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        text = request.query_params.get("text", "").strip()
+        target = request.query_params.get("target", "ru").strip()
+
+        if not text:
+            return Response(
+                {"detail": "Параметр text обязателен."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(text) > 500:
+            return Response(
+                {"detail": "Текст не должен быть длиннее 500 символов."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        response = requests.get(
+            "https://api.mymemory.translated.net/get",
+            params={
+                "q": text,
+                "langpair": f"en|{target}",
+            },
+            timeout=15,
+        )
+
+        if not response.ok:
+            return Response(
+                {"detail": "Сервис перевода временно недоступен."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        data = response.json()
+        response_data = data.get("responseData") or {}
+
+        return Response(
+            {
+                "text": text,
+                "target": target,
+                "translation": response_data.get(
+                    "translatedText",
+                    "",
+                ),
+            }
+        )
