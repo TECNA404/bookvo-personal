@@ -1,10 +1,10 @@
-from rest_framework import filters, status, viewsets
+from rest_framework import filters, generics, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .models import Book
 from .serializers import BookSerializer
-
+from .auth_serializers import RegisterSerializer
 
 class BookViewSet(viewsets.ModelViewSet):
     serializer_class = BookSerializer
@@ -90,3 +90,7 @@ class BookViewSet(viewsets.ModelViewSet):
         book.save()
 
         return Response(BookSerializer(book).data)
+
+class RegisterView(generics.CreateAPIView):
+    serializer_class = RegisterSerializer
+    permission_classes = [permissions.AllowAny]
