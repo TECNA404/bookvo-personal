@@ -3,6 +3,7 @@ from datetime import timedelta
 import requests
 
 from django.utils import timezone
+from django.db.models import Q
 
 from rest_framework import (
     filters,
@@ -25,6 +26,7 @@ from .serializers import (
     ChapterSerializer,
     SavedWordSerializer,
 )
+
 
 class BookViewSet(viewsets.ModelViewSet):
     serializer_class = BookSerializer
@@ -285,14 +287,19 @@ class SavedWordViewSet(viewsets.ModelViewSet):
     def due_words(self, request):
         now = timezone.now()
 
-        queryset = self.get_queryset().filter(is_learned=False)
-        words = queryset.filter(next_review_at__isnull=True) | queryset.filter(
-            next_review_at__lte=now
-        )
+        queryset = self.get_queryset().filter(is_learned=False).filter(
+            Q(next_review_at__isnull=True)
+            | Q(next_review_at__lte=now)
+        ).order_by("next_review_at", "created_at")
 
-        words = words.order_by("next_review_at", "created_at")
+        page = self.paginate_queryset(queryset)
 
-        return Response(SavedWordSerializer(words, many=True).data)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 class RegisterView(generics.CreateAPIView):
@@ -302,47 +309,67 @@ class RegisterView(generics.CreateAPIView):
 class TranslateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    ALLOWED_TARGETS = {
+        "uk": "українська",
+        "ru": "російська",
+        "pl": "польська",
+        "de": "німецька",
+        "fr": "французька",
+    }
+
     def get(self, request):
         text = request.query_params.get("text", "").strip()
-        target = request.query_params.get("target", "ru").strip()
+        target = request.query_params.get("target", "uk").strip().lower()
 
         if not text:
             return Response(
-                {"detail": "Параметр text обязателен."},
+                {"detail": "Параметр text обов'язковий."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if len(text) > 500:
             return Response(
-                {"detail": "Текст не должен быть длиннее 500 символов."},
+                {"detail": "Текст не може містити понад 500 символів."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        response = requests.get(
-            "https://api.mymemory.translated.net/get",
-            params={
-                "q": text,
-                "langpair": f"en|{target}",
-            },
-            timeout=15,
-        )
-
-        if not response.ok:
+        if target not in self.ALLOWED_TARGETS:
             return Response(
-                {"detail": "Сервис перевода временно недоступен."},
+                {
+                    "detail": "Непідтримувана мова перекладу.",
+                    "allowed_targets": self.ALLOWED_TARGETS,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            response = requests.get(
+                "https://api.mymemory.translated.net/get",
+                params={
+                    "q": text,
+                    "langpair": f"en|{target}",
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException:
+            return Response(
+                {"detail": "Сервіс перекладу тимчасово недоступний."},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        data = response.json()
-        response_data = data.get("responseData") or {}
+        translated = (
+            data.get("responseData", {})
+            .get("translatedText", "")
+        )
 
         return Response(
             {
                 "text": text,
+                "source": "en",
                 "target": target,
-                "translation": response_data.get(
-                    "translatedText",
-                    "",
-                ),
+                "target_name": self.ALLOWED_TARGETS[target],
+                "translation": translated,
             }
         )
