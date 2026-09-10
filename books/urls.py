@@ -6,20 +6,36 @@ from .views import (
     ChapterViewSet,
     RegisterView,
     SavedWordViewSet,
-    TranslateView,
+    TranslateViewSet,
 )
 
 router = DefaultRouter()
-router.register("books", BookViewSet, basename="book")
-router.register("chapters", ChapterViewSet, basename="chapter")
-router.register("words", SavedWordViewSet, basename="word")
+
+router.register(
+    "books",
+    BookViewSet,
+    basename="book",
+)
+router.register(
+    "chapters",
+    ChapterViewSet,
+    basename="chapter",
+)
+router.register(
+    "words",
+    SavedWordViewSet,
+    basename="word",
+)
+router.register(
+    "translate",
+    TranslateViewSet,
+    basename="translate",
+)
 
 urlpatterns = [
-    path("", include(router.urls)),
     path(
-        "translate/",
-        TranslateView.as_view(),
-        name="translate",
+        "",
+        include(router.urls),
     ),
     path(
         "auth/register/",

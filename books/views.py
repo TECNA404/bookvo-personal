@@ -2,9 +2,9 @@ from datetime import timedelta
 
 import requests
 
-from django.utils import timezone
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
 from rest_framework import (
     filters,
@@ -16,7 +16,6 @@ from rest_framework import (
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
-from rest_framework.views import APIView
 
 from .auth_serializers import RegisterSerializer
 from .epub_importer import import_epub
@@ -31,9 +30,23 @@ from .serializers import (
 
 class BookViewSet(viewsets.ModelViewSet):
     serializer_class = BookSerializer
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ["title", "author", "genre"]
-    ordering_fields = ["created_at", "updated_at", "progress", "year", "title"]
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    ]
+    search_fields = [
+        "title",
+        "author",
+        "genre",
+    ]
+    ordering_fields = [
+        "created_at",
+        "updated_at",
+        "progress",
+        "year",
+        "title",
+    ]
 
     def get_queryset(self):
         queryset = Book.objects.filter(owner=self.request.user)
@@ -54,20 +67,27 @@ class BookViewSet(viewsets.ModelViewSet):
     )
     def catalog_search(self, request):
         query = request.query_params.get("q", "").strip()
-        page = request.query_params.get("page", 1)
+        page_value = request.query_params.get("page", "1")
 
         try:
-            page = int(page)
-        except ValueError:
+            page = int(page_value)
+        except (TypeError, ValueError):
             page = 1
 
+        page = max(page, 1)
+
         try:
-            result = get_catalog_books(query=query, page=page)
-        except Exception as error:
+            result = get_catalog_books(
+                query=query,
+                page=page,
+            )
+        except Exception:
             return Response(
                 {
-                    "detail": "Не удалось получить книги из внешнего каталога.",
-                    "error": str(error),
+                    "detail": (
+                        "Не удалось получить книги "
+                        "из внешнего каталога."
+                    ),
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
@@ -84,7 +104,11 @@ class BookViewSet(viewsets.ModelViewSet):
             gutenberg_id = int(gutenberg_id)
         except (TypeError, ValueError):
             return Response(
-                {"detail": "gutenberg_id должен быть числом."},
+                {
+                    "detail": (
+                        "gutenberg_id должен быть числом."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -100,7 +124,11 @@ class BookViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             return Response(
-                {"detail": "Не удалось импортировать книгу."},
+                {
+                    "detail": (
+                        "Не удалось импортировать книгу."
+                    ),
+                },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
@@ -123,24 +151,42 @@ class BookViewSet(viewsets.ModelViewSet):
 
         if not uploaded_file:
             return Response(
-                {"detail": "Передайте EPUB-файл в поле file."},
+                {
+                    "detail": (
+                        "Передайте EPUB-файл в поле file."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if not uploaded_file.name.lower().endswith(".epub"):
             return Response(
-                {"detail": "Поддерживаются только файлы .epub."},
+                {
+                    "detail": (
+                        "Поддерживаются только файлы .epub."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        book = import_epub(request.user, uploaded_file)
+        book = import_epub(
+            request.user,
+            uploaded_file,
+        )
 
         return Response(
-            BookSerializer(book, context={"request": request}).data,
+            BookSerializer(
+                book,
+                context={"request": request},
+            ).data,
             status=status.HTTP_201_CREATED,
         )
 
-    @action(detail=False, methods=["get"], url_path="statistics")
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="statistics",
+    )
     def statistics(self, request):
         books = self.get_queryset()
 
@@ -150,20 +196,27 @@ class BookViewSet(viewsets.ModelViewSet):
         finished = books.filter(status="finished").count()
 
         average_progress = 0
+
         if total:
             average_progress = round(
                 sum(book.progress for book in books) / total
             )
 
-        return Response({
-            "total": total,
-            "planning": planning,
-            "reading": reading,
-            "finished": finished,
-            "average_progress": average_progress,
-        })
+        return Response(
+            {
+                "total": total,
+                "planning": planning,
+                "reading": reading,
+                "finished": finished,
+                "average_progress": average_progress,
+            }
+        )
 
-    @action(detail=True, methods=["patch"], url_path="progress")
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path="progress",
+    )
     def update_progress(self, request, pk=None):
         book = self.get_object()
 
@@ -171,19 +224,33 @@ class BookViewSet(viewsets.ModelViewSet):
             pages_read = int(request.data["pages_read"])
         except (KeyError, TypeError, ValueError):
             return Response(
-                {"detail": "Передайте целое число в поле pages_read."},
+                {
+                    "detail": (
+                        "Передайте целое число "
+                        "в поле pages_read."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if pages_read < 0:
             return Response(
-                {"detail": "pages_read не может быть отрицательным."},
+                {
+                    "detail": (
+                        "pages_read не может быть отрицательным."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if book.pages_total and pages_read > book.pages_total:
             return Response(
-                {"detail": "Прочитанных страниц не может быть больше общего числа."},
+                {
+                    "detail": (
+                        "Количество прочитанных страниц "
+                        "не может быть больше общего числа."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -191,10 +258,17 @@ class BookViewSet(viewsets.ModelViewSet):
         book.save()
 
         return Response(
-            BookSerializer(book, context={"request": request}).data
+            BookSerializer(
+                book,
+                context={"request": request},
+            ).data
         )
 
-    @action(detail=True, methods=["patch"], url_path="finish")
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path="finish",
+    )
     def finish_book(self, request, pk=None):
         book = self.get_object()
 
@@ -207,19 +281,26 @@ class BookViewSet(viewsets.ModelViewSet):
         book.save()
 
         return Response(
-            BookSerializer(book, context={"request": request}).data
+            BookSerializer(
+                book,
+                context={"request": request},
+            ).data
         )
 
 
 class ChapterViewSet(viewsets.ModelViewSet):
     serializer_class = ChapterSerializer
+    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ["number"]
 
     def get_queryset(self):
-        queryset = Chapter.objects.filter(book__owner=self.request.user)
+        queryset = Chapter.objects.filter(
+            book__owner=self.request.user
+        )
 
         book_id = self.request.query_params.get("book")
+
         if book_id:
             queryset = queryset.filter(book_id=book_id)
 
@@ -238,36 +319,68 @@ class ChapterViewSet(viewsets.ModelViewSet):
 
 class SavedWordViewSet(viewsets.ModelViewSet):
     serializer_class = SavedWordSerializer
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ["word", "translation", "context"]
-    ordering_fields = ["created_at", "word", "times_reviewed"]
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    ]
+    search_fields = [
+        "word",
+        "translation",
+        "context",
+    ]
+    ordering_fields = [
+        "created_at",
+        "word",
+        "times_reviewed",
+    ]
 
     def get_queryset(self):
-        queryset = SavedWord.objects.filter(user=self.request.user)
+        queryset = SavedWord.objects.filter(
+            user=self.request.user
+        )
 
         learned_value = self.request.query_params.get("learned")
+
         if learned_value in ("true", "false"):
             queryset = queryset.filter(
                 is_learned=(learned_value == "true")
             )
 
         book_id = self.request.query_params.get("book")
+
         if book_id:
             queryset = queryset.filter(book_id=book_id)
 
         return queryset
 
     def perform_create(self, serializer):
+        book = serializer.validated_data.get("book")
+
+        if book and book.owner_id != self.request.user.id:
+            raise permissions.PermissionDenied(
+                "Нельзя сохранить слово в чужую книгу."
+            )
+
         serializer.save(user=self.request.user)
 
-    @action(detail=True, methods=["patch"], url_path="review")
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path="review",
+    )
     def review_word(self, request, pk=None):
         word = self.get_object()
         result = request.data.get("result")
 
         if result not in ("known", "again"):
             return Response(
-                {"detail": "Передайте result: 'known' или 'again'."},
+                {
+                    "detail": (
+                        "Передайте result: "
+                        "'known' или 'again'."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -282,63 +395,98 @@ class SavedWordViewSet(viewsets.ModelViewSet):
 
         word.save()
 
-        return Response(SavedWordSerializer(word).data)
+        return Response(
+            SavedWordSerializer(
+                word,
+                context={"request": request},
+            ).data
+        )
 
-    @action(detail=False, methods=["get"], url_path="due")
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="due",
+    )
     def due_words(self, request):
         now = timezone.now()
 
-        queryset = self.get_queryset().filter(is_learned=False).filter(
-            Q(next_review_at__isnull=True)
-            | Q(next_review_at__lte=now)
-        ).order_by("next_review_at", "created_at")
+        queryset = (
+            self.get_queryset()
+            .filter(is_learned=False)
+            .filter(
+                Q(next_review_at__isnull=True)
+                | Q(next_review_at__lte=now)
+            )
+            .order_by("next_review_at", "created_at")
+        )
 
         page = self.paginate_queryset(queryset)
 
         if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            serializer = self.get_serializer(
+                page,
+                many=True,
+            )
+            return self.get_paginated_response(
+                serializer.data
+            )
 
-        serializer = self.get_serializer(queryset, many=True)
+        serializer = self.get_serializer(
+            queryset,
+            many=True,
+        )
+
         return Response(serializer.data)
 
 
-class RegisterView(generics.CreateAPIView):
-    serializer_class = RegisterSerializer
-    permission_classes = [permissions.AllowAny]
-
-class TranslateView(APIView):
+class TranslateViewSet(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
-    ALLOWED_TARGETS = {
-        "uk": "українська",
-        "ru": "російська",
-        "pl": "польська",
-        "de": "німецька",
-        "fr": "французька",
+    allowed_targets = {
+        "uk": "украинский",
+        "ru": "русский",
+        "pl": "польский",
+        "de": "немецкий",
+        "fr": "французский",
     }
 
-    def get(self, request):
+    def list(self, request):
         text = request.query_params.get("text", "").strip()
-        target = request.query_params.get("target", "uk").strip().lower()
+        target = request.query_params.get(
+            "target",
+            "uk",
+        ).strip().lower()
 
         if not text:
             return Response(
-                {"detail": "Параметр text обов'язковий."},
+                {
+                    "detail": (
+                        "Параметр text обязателен."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if len(text) > 500:
             return Response(
-                {"detail": "Текст не може містити понад 500 символів."},
+                {
+                    "detail": (
+                        "Текст не может содержать "
+                        "более 500 символов."
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if target not in self.ALLOWED_TARGETS:
+        if target not in self.allowed_targets:
             return Response(
                 {
-                    "detail": "Непідтримувана мова перекладу.",
-                    "allowed_targets": self.ALLOWED_TARGETS,
+                    "detail": (
+                        "Неподдерживаемый язык перевода."
+                    ),
+                    "allowed_targets": sorted(
+                        self.allowed_targets
+                    ),
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -356,13 +504,19 @@ class TranslateView(APIView):
             data = response.json()
         except requests.RequestException:
             return Response(
-                {"detail": "Сервіс перекладу тимчасово недоступний."},
+                {
+                    "detail": (
+                        "Сервис перевода временно "
+                        "недоступен."
+                    ),
+                },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
         translated = (
             data.get("responseData", {})
             .get("translatedText", "")
+            .strip()
         )
 
         return Response(
@@ -370,7 +524,7 @@ class TranslateView(APIView):
                 "text": text,
                 "source": "en",
                 "target": target,
-                "target_name": self.ALLOWED_TARGETS[target],
+                "target_name": self.allowed_targets[target],
                 "translation": translated,
             }
         )
@@ -382,50 +536,72 @@ class TranslateView(APIView):
     )
     def lookup_word(self, request):
         text = request.data.get("text", "").strip()
-        target = request.data.get("target", "uk").strip().lower()
+        target = request.data.get(
+            "target",
+            "uk",
+        ).strip().lower()
         book_id = request.data.get("book")
-        context = request.data.get("context", "").strip()
-        save_word = request.data.get("save", False)
+        context = request.data.get(
+            "context",
+            "",
+        ).strip()
+        save_word = request.data.get(
+            "save",
+            False,
+        )
 
         if not text:
             return Response(
-                {"detail": "Поле text обязательное."},
+                {
+                    "detail": "Поле text обязательно.",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if len(text) > 100:
             return Response(
-                {"detail": "Слово или фраза слишком длинные."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        allowed_targets = {"uk", "ru", "pl", "de", "fr"}
-
-        if target not in allowed_targets:
-            return Response(
                 {
-                    "detail": "Неподдерживаемый язык.",
-                    "allowed_targets": sorted(allowed_targets),
+                    "detail": (
+                        "Слово или фраза слишком длинные."
+                    ),
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        translation_response = requests.get(
-            "https://api.mymemory.translated.net/get",
-            params={
-                "q": text,
-                "langpair": f"en|{target}",
-            },
-            timeout=15,
-        )
-
-        if not translation_response.ok:
+        if target not in self.allowed_targets:
             return Response(
-                {"detail": "Сервис перевода недоступен."},
+                {
+                    "detail": "Неподдерживаемый язык.",
+                    "allowed_targets": sorted(
+                        self.allowed_targets
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            translation_response = requests.get(
+                "https://api.mymemory.translated.net/get",
+                params={
+                    "q": text,
+                    "langpair": f"en|{target}",
+                },
+                timeout=15,
+            )
+            translation_response.raise_for_status()
+            translation_data = (
+                translation_response.json()
+            )
+        except requests.RequestException:
+            return Response(
+                {
+                    "detail": (
+                        "Сервис перевода недоступен."
+                    ),
+                },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        translation_data = translation_response.json()
         translation = (
             translation_data.get("responseData", {})
             .get("translatedText", "")
@@ -449,14 +625,16 @@ class TranslateView(APIView):
                     owner=request.user,
                 )
 
-            saved_word, created = SavedWord.objects.get_or_create(
-                user=request.user,
-                word=text.lower(),
-                defaults={
-                    "translation": translation,
-                    "context": context,
-                    "book": book,
-                },
+            saved_word, created = (
+                SavedWord.objects.get_or_create(
+                    user=request.user,
+                    word=text.lower(),
+                    defaults={
+                        "translation": translation,
+                        "context": context,
+                        "book": book,
+                    },
+                )
             )
 
             if not created:
@@ -482,3 +660,8 @@ class TranslateView(APIView):
             ).data
 
         return Response(result)
+
+
+class RegisterView(generics.CreateAPIView):
+    serializer_class = RegisterSerializer
+    permission_classes = [permissions.AllowAny]

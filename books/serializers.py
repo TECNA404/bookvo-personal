@@ -1,9 +1,57 @@
+from django.contrib.auth.models import User
 from rest_framework import serializers
 
 from .models import Book, Chapter, SavedWord
 
 
+class BookSerializer(serializers.ModelSerializer):
+    owner = serializers.PrimaryKeyRelatedField(read_only=True)
+    cover_image = serializers.ImageField(
+        required=False,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = Book
+        fields = [
+            "id",
+            "owner",
+            "title",
+            "author",
+            "year",
+            "genre",
+            "cover_url",
+            "gutenberg_id",
+            "cover_image",
+            "status",
+            "progress",
+            "pages_total",
+            "pages_read",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "owner",
+            "progress",
+            "created_at",
+            "updated_at",
+        ]
+
+    def validate_progress(self, value):
+        if not 0 <= value <= 100:
+            raise serializers.ValidationError(
+                "Progress must be between 0 and 100."
+            )
+        return value
+
+
 class ChapterSerializer(serializers.ModelSerializer):
+    book = serializers.PrimaryKeyRelatedField(
+        queryset=Book.objects.all(),
+    )
+
     class Meta:
         model = Chapter
         fields = [
@@ -14,84 +62,36 @@ class ChapterSerializer(serializers.ModelSerializer):
             "content",
             "audio_url",
         ]
-        read_only_fields = [
-            "id",
-            "book",
-        ]
+        read_only_fields = ["id"]
 
-
-class BookSerializer(serializers.ModelSerializer):
-    chapters_count = serializers.IntegerField(
-        source="chapters.count",
-        read_only=True,
-    )
-    cover_image_url = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Book
-        fields = [
-            "id",
-            "title",
-            "author",
-            "year",
-            "genre",
-            "cover_url",
-            "gutenberg_id",
-            "cover_image",
-            "cover_image_url",
-            "status",
-            "progress",
-            "pages_total",
-            "pages_read",
-            "notes",
-            "chapters_count",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = [
-            "id",
-            "gutenberg_id",
-            "progress",
-            "chapters_count",
-            "created_at",
-            "updated_at",
-        ]
-
-    def get_cover_image_url(self, obj):
+    def validate_book(self, book):
         request = self.context.get("request")
 
-        if not obj.cover_image:
-            return None
-
-        if request:
-            return request.build_absolute_uri(obj.cover_image.url)
-
-        return obj.cover_image.url
-
-    def validate_progress(self, value):
-        if not 0 <= value <= 100:
+        if request and book.owner_id != request.user.id:
             raise serializers.ValidationError(
-                "Прогресс должен быть от 0 до 100."
+                "You can use chapters only with your own books."
             )
 
-        return value
+        return book
 
 
 class SavedWordSerializer(serializers.ModelSerializer):
-    book_title = serializers.CharField(
-        source="book.title",
-        read_only=True,
+    user = serializers.PrimaryKeyRelatedField(read_only=True)
+    book = serializers.PrimaryKeyRelatedField(
+        queryset=Book.objects.all(),
+        allow_null=True,
+        required=False,
     )
 
     class Meta:
         model = SavedWord
         fields = [
             "id",
+            "user",
             "word",
             "translation",
             "context",
             "book",
-            "book_title",
             "is_learned",
             "times_reviewed",
             "next_review_at",
@@ -99,28 +99,36 @@ class SavedWordSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
-            "book_title",
+            "user",
             "times_reviewed",
             "next_review_at",
             "created_at",
         ]
 
-    def validate_word(self, value):
-        value = value.strip()
-
-        if not value:
-            raise serializers.ValidationError(
-                "Слово не может быть пустым."
-            )
-
-        return value
-
     def validate_book(self, book):
-        request = self.context["request"]
+        request = self.context.get("request")
 
-        if book.owner_id != request.user.id:
+        if book and request and book.owner_id != request.user.id:
             raise serializers.ValidationError(
-                "Можно привязать слово только к своей книге."
+                "You can use only your own books."
             )
 
         return book
+
+
+class RegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(
+        write_only=True,
+        min_length=8,
+    )
+
+    class Meta:
+        model = User
+        fields = [
+            "username",
+            "email",
+            "password",
+        ]
+
+    def create(self, validated_data):
+        return User.objects.create_user(**validated_data)
