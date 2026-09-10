@@ -92,6 +92,15 @@ class BookViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
+        def get_throttles(self):
+            if self.action in (
+                    "catalog_search",
+                    "catalog_import",
+            ):
+                self.throttle_scope = "catalog"
+
+            return super().get_throttles()
+
         return Response(result)
 
     @action(
@@ -449,6 +458,10 @@ class TranslateViewSet(viewsets.ViewSet):
         "de": "немецкий",
         "fr": "французский",
     }
+
+    def get_throttles(self):
+        self.throttle_scope = "translation"
+        return super().get_throttles()
 
     def list(self, request):
         text = request.query_params.get("text", "").strip()

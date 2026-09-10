@@ -1,9 +1,10 @@
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
+from django.test import override_settings
+from unittest.mock import patch
 
 from .models import Book
-
 
 class BooksApiTests(APITestCase):
     def setUp(self):
@@ -270,3 +271,59 @@ class BooksApiTests(APITestCase):
             response.data["average_progress"],
             50,
         )
+
+    @override_settings(
+        REST_FRAMEWORK={
+            "DEFAULT_AUTHENTICATION_CLASSES": (
+                    "rest_framework_simplejwt.authentication.JWTAuthentication",
+            ),
+            "DEFAULT_PERMISSION_CLASSES": (
+                    "rest_framework.permissions.IsAuthenticated",
+            ),
+            "DEFAULT_THROTTLE_CLASSES": [
+                "rest_framework.throttling.ScopedRateThrottle",
+            ],
+            "DEFAULT_THROTTLE_RATES": {
+                "translation": "2/minute",
+            },
+        }
+    )
+    class TranslationThrottleTests(APITestCase):
+        def setUp(self):
+            User = get_user_model()
+
+            self.user = User.objects.create_user(
+                username="translation_user",
+                password="strong-test-password",
+            )
+
+            self.client.force_authenticate(user=self.user)
+
+        @patch("books.views.requests.get")
+        def test_translation_throttle(self, mock_get):
+            mock_get.return_value.ok = True
+            mock_get.return_value.raise_for_status.return_value = None
+            mock_get.return_value.json.return_value = {
+                "responseData": {
+                    "translatedText": "привет",
+                },
+            }
+
+            url = "/api/translate/?text=hello&target=uk"
+
+            first_response = self.client.get(url)
+            second_response = self.client.get(url)
+            third_response = self.client.get(url)
+
+            self.assertEqual(
+                first_response.status_code,
+                status.HTTP_200_OK,
+            )
+            self.assertEqual(
+                second_response.status_code,
+                status.HTTP_200_OK,
+            )
+            self.assertEqual(
+                third_response.status_code,
+                status.HTTP_429_TOO_MANY_REQUESTS,
+            )
